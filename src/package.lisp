@@ -8,7 +8,7 @@
 
 (in-package :vend)
 
-#-ecl
+#-(or sbcl ecl)
 (error "VEND can only be compiled with ECL.")
 
 ;; --- Strings --- ;;

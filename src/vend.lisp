@@ -30,8 +30,8 @@ names of the added systems."
 project. If FOCUS is supplied, only considers the subgraph with that FOCUS as
 the root."
   (let* ((graph (g:make-graph))
-         (top   (scan-systems! graph (root-asd-files (ext:getcwd)))))
-    (scan-systems! graph (asd-files (p:join (ext:getcwd) "vendored")))
+         (top   (scan-systems! graph (root-asd-files (uiop:getcwd)))))
+    (scan-systems! graph (asd-files (p:join (uiop:getcwd) "vendored")))
     (let ((final (cond (focus (g:subgraph graph (into-keyword focus)))
                        (t (apply #'g:subgraph graph top)))))
       (with-open-file (stream #p"deps.dot" :direction :output :if-exists :supersede)
@@ -59,8 +59,8 @@ the root."
 (defun vend/check (&key focus)
   "Check the dependency graph for old deps, etc."
   (let* ((graph (g:make-graph))
-         (top   (scan-systems! graph (root-asd-files (ext:getcwd)))))
-    (scan-systems! graph (asd-files (p:join (ext:getcwd) "vendored")))
+         (top   (scan-systems! graph (root-asd-files (uiop:getcwd)))))
+    (scan-systems! graph (asd-files (p:join (uiop:getcwd) "vendored")))
     (let ((final (cond (focus (g:subgraph graph (into-keyword focus)))
                        (t (apply #'g:subgraph graph top)))))
       (t:transduce (t:comp (t:map #'car)
@@ -90,7 +90,7 @@ the root."
   "Given a source URL to clone from, do a shallow git clone into a given absolute PATH."
   (unless (probe-file path)
     (multiple-value-bind (stream code obj)
-        (ext:run-program "git" (list "clone" "--quiet" "--depth=1" url path) :output t)
+        (uiop:run-program (list "git" "clone" "--quiet" "--depth=1" url path) :output *standard-output*)
       (declare (ignore stream obj))
       (assert (= 0 code) nil "Clone failed: ~a" url))))
 
@@ -102,8 +102,8 @@ the root."
                (t:transduce (t:comp (t:map (lambda (leaf) (or (get-parent leaf) leaf)))
                                     #'t:unique
                                     (t:filter (lambda (leaf) (not (or (gethash leaf cloned)
-                                                                      (member leaf +exclude+)
-                                                                      (member leaf +missing+))))))
+                                                                 (member leaf +exclude+)
+                                                                 (member leaf +missing+))))))
                             #'t:cons (g:leaves g)))
              (recurse (top dep)
                (unless (gethash dep cloned)
@@ -134,7 +134,7 @@ the root."
 
 ;; --- Executable --- ;;
 
-(defconstant +help+
+(defparameter +help+
   "vend - Vendor your Common Lisp dependencies
 
 Commands:
@@ -150,31 +150,63 @@ Flags:
   --version - Display the current version of vend
 ")
 
-(defconstant +vend-rules+
-  '((("--help" "-h") 0 (vend/help))
-    ("--version" 0 (format t "0.1.3~%"))
-    ("check"  1 (vend/check :focus (cadr 1)) :stop)
-    ("get"    0 (vend/get))
-    ("graph"  1 (vend/graph :focus (cadr 1)) :stop)
-    ("repl"   1 (vend/repl (rest 1)) :stop)
-    ("search" 1 (vend/search 1))
-    ("test"   1 (vend/test (rest 1)) :stop)))
+;; (defconstant +vend-rules+
+;;   '((("--help" "-h") 0 (vend/help))
+;;     ("--version" 0 (format t "0.1.3~%"))
+;;     ("check"  1 (vend/check :focus (cadr 1)) :stop)
+;;     ("get"    0 (vend/get))
+;;     ("graph"  1 (vend/graph :focus (cadr 1)) :stop)
+;;     ("repl"   1 (vend/repl (rest 1)) :stop)
+;;     ("search" 1 (vend/search 1))
+;;     ("test"   1 (vend/test (rest 1)) :stop)))
+
+(defparameter +command-line-spec+
+  '((("help" #\h) :type boolean :optional t)
+    (("version")  :type boolean :optional t)))
+
+(defun app (args &key help version)
+  (format t "args: ~s, help: ~a, version: ~a~%" args help version)
+  (cond (version
+         (format t "0.1.3~%"))
+        ((or help (null args))
+         (vend/help))
+        ((string= "check" (first args))
+         (vend/check :focus (second args)))
+        ((string= "get" (first args))
+         (vend/get))
+        ((string= "graph" (first args))
+         (vend/graph :focus (second args)))
+        ((string= "repl" (first args))
+         (vend/repl (rest args)))
+        ((string= "search" (first args))
+         (vend/search args))
+        ((string= "test" (first args))
+         (vend/test (rest args)))
+        (t (vend/help))))
+
+(defun main ()
+  (command-line-arguments:handle-command-line
+   +command-line-spec+
+   'app
+   :command-line uiop:*command-line-arguments*
+   :name "vend"
+   :rest-arity t))
 
 (defun vend/help ()
   (princ +help+))
 
 (defun vend/get ()
   "Download all dependencies."
-  (let* ((cwd (ext:getcwd))
+  (let* ((cwd (uiop:getcwd))
          (dir (p:ensure-directory (p:join cwd "vendored"))))
     (vlog "Downloading dependencies.")
     (handler-bind ((error (lambda (c)
                             (format t "~a~%" c)
-                            (ext:quit 1))))
+                            (uiop:quit 1))))
       (work cwd dir))
     (vlog "Done.")))
 
-(defun vend/test (args &key (dir (ext:getcwd)))
+(defun vend/test (args &key (dir (uiop:getcwd)))
   "Run detected test systems."
   (let* ((compiler (or (car args) "sbcl"))
          (eval (if (string-equal "alisp" compiler) "-e" "--eval"))
@@ -188,10 +220,10 @@ Flags:
                                #'t:cons (append (list +require-asdf+ +init-registry+) tests))))
         (vlog "Running tests.")
         (multiple-value-bind (stream code state)
-            (ext:run-program compiler (append (cdr args) exps) :output *standard-output*)
+            (uiop:run-program (append (list compiler) (cdr args) exps) :output *standard-output*)
           (declare (ignore stream state))
           (unless (zerop code)
-            (ext:quit 1)))))))
+            (uiop:quit 1)))))))
 
 #++
 (vend/test '() :dir #p"/home/colin/code/common-lisp/filepaths/")
@@ -201,14 +233,7 @@ Flags:
   (let* ((compiler (or (car args) "sbcl"))
          (eval (if (string-equal "alisp" compiler) "-e" "--eval"))
          (load (list eval +require-asdf+ eval +init-registry+)))
-    (ext:run-program compiler (append (cdr args) load) :output t :input *standard-input*)))
-
-(defun main ()
-  (let ((ext:*lisp-init-file-list* nil)
-        (ext:*help-message* +help+))
-    (cond ((= 1 (length ext:*command-args*)) (vend/help))
-          (t (ext:process-command-args :rules +vend-rules+)))
-    (ext:quit 0)))
+    (uiop:run-program (append (list compiler) (cdr args) load) :output t :input *standard-input*)))
 
 ;; Bad boys:
 ;; https://github.com/slyrus/opticl/blob/master/opticl-doc.asd
